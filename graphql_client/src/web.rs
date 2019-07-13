@@ -19,6 +19,7 @@ use wasm_bindgen_futures::JsFuture;
 pub struct Client {
     endpoint: String,
     headers: HashMap<String, String>,
+    files: HashMap<String, web_sys::File>,
 }
 
 /// All the ways a request can go wrong.
@@ -63,12 +64,18 @@ impl Client {
         Client {
             endpoint: endpoint.into(),
             headers: HashMap::new(),
+            files: HashMap::new(),
         }
     }
 
     /// Add a header to those sent with the requests. Can be used for things like authorization.
     pub fn add_header(&mut self, name: &str, value: &str) {
         self.headers.insert(name.into(), value.into());
+    }
+
+    /// Add a file to those sent with the requests.
+    pub fn add_file<S: Into<String>>(&mut self, name: S, value: web_sys::File) {
+        self.files.insert(name.into(), value);
     }
 
     /// Perform a query.
@@ -83,6 +90,7 @@ impl Client {
         // this can be removed when we convert to async/await
         let endpoint = self.endpoint.clone();
         let custom_headers = self.headers.clone();
+        let files = self.files.clone();
 
         web_sys::window()
             .ok_or_else(|| ClientError::NoWindow)
@@ -94,20 +102,37 @@ impl Client {
             })
             .and_then(move |(window, body)| {
                 let mut request_init = web_sys::RequestInit::new();
-                request_init
-                    .method("POST")
-                    .body(Some(&JsValue::from_str(&body)));
+                let mut has_files = false;
+
+                if files.len() > 0 {
+                    let form = web_sys::FormData::new().map_err(|_| ClientError::JsException)?;
+                    form.append_with_str("query", &body)
+                        .map_err(|_| ClientError::JsException)?;
+
+                    for (name, file) in files.into_iter() {
+                        form.append_with_blob(&name, &file)
+                            .map_err(|_| ClientError::JsException)?;
+                    }
+
+                    request_init.method("POST").body(Some(&form.into()));
+                    has_files = true;
+                } else {
+                    request_init
+                        .method("POST")
+                        .body(Some(&JsValue::from_str(&body)));
+                }
 
                 web_sys::Request::new_with_str_and_init(&endpoint, &request_init)
                     .map_err(|_| ClientError::JsException)
-                    .map(|request| (window, request))
-                // "Request constructor threw");
+                    .map(|request| (window, request, has_files))
             })
-            .and_then(move |(window, request)| {
+            .and_then(move |(window, request, has_files)| {
                 let headers = request.headers();
-                headers
-                    .set("Content-Type", "application/json")
-                    .map_err(|_| ClientError::RequestError)?;
+                if !has_files {
+                    headers
+                        .set("Content-Type", "application/json")
+                        .map_err(|_| ClientError::RequestError)?;
+                }
                 headers
                     .set("Accept", "application/json")
                     .map_err(|_| ClientError::RequestError)?;

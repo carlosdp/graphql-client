@@ -32,6 +32,9 @@ optional = true
 version = "0.3.2"
 optional = true
 features = [
+    "Blob",
+    "File",
+    "FormData",
     "Headers",
     "Request",
     "RequestInit",
